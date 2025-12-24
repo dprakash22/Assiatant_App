@@ -156,27 +156,27 @@ export default function Assistant() {
   // (Demo using libretranslate — replace as needed)
   // -------------------------------
   const translate = async () => {
-    if (!inputText.trim()) return;
+  if (!inputText.trim()) return;
 
-    try {
-      const res = await fetch("https://translate.argosopentech.com/translat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          q: inputText,
-          source: fromLang,
-          target: toLang,
-          format: "text",
-        }),
-      });
+  try {
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: inputText,
+        source: fromLang,
+        target: toLang,
+      }),
+    });
 
-      const data = await res.json();
-      setTranslatedText(data.translatedText || "");
-    } catch (e) {
-      console.error(e);
-      setTranslatedText("Translation failed");
-    }
-  };
+    const data = await res.json();
+    setTranslatedText(data.translated);
+  } catch (error) {
+    console.error(error);
+    setTranslatedText("Translation failed");
+  }
+};
+
 
   // Swap English <-> Tamil direction
   const swapLanguages = () => {
