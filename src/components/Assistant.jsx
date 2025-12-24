@@ -159,7 +159,7 @@ export default function Assistant() {
     if (!inputText.trim()) return;
 
     try {
-      const res = await fetch("https://libretranslate.de/translate", {
+      const res = await fetch("https://translate.argosopentech.com/translat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
