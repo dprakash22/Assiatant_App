@@ -1,23 +1,40 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useReminders } from "./ReminderContext";
+import { parseReminderFromText } from "../utils/parseReminderTime";
 
 const SpeechContext = createContext();
 
 export function SpeechProvider({ children }) {
   const navigate = useNavigate();
 
+  // get reminders only from ReminderContext
+  const { setReminders } = useReminders();
+
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
 
   const recognitionRef = useRef(null);
-  const manualStopRef = useRef(false);
-  const isStartingRef = useRef(false); // <-- NEW GUARD
 
   const [listening, setListening] = useState(false);
-  const [transcript, setTranscript] = useState("");
   const [jarvisActive, setJarvisActive] = useState(false);
+  const [transcript, setTranscript] = useState("");
 
-  // ---------- INIT RECOGNITION ----------
+  // guards
+  const isStartingRef = useRef(false);
+  const manualStopRef = useRef(false);
+
+  // NOTES saved locally
+  const [notes, setNotes] = useState(() =>
+    JSON.parse(localStorage.getItem("notes") || "[]")
+  );
+
+  // persist notes
+  useEffect(() => {
+    localStorage.setItem("notes", JSON.stringify(notes));
+  }, [notes]);
+
+  // -------- INIT SPEECH RECOGNITION --------
   useEffect(() => {
     if (!SpeechRecognition) return;
 
@@ -32,11 +49,15 @@ export function SpeechProvider({ children }) {
     };
 
     recognition.onresult = (event) => {
-      let text = "";
+      let finalText = "";
+
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        text += event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += event.results[i][0].transcript;
+        }
       }
-      setTranscript(text.toLowerCase());
+
+      if (finalText) setTranscript(finalText.toLowerCase());
     };
 
     recognition.onerror = () => {
@@ -47,9 +68,8 @@ export function SpeechProvider({ children }) {
     recognition.onend = () => {
       setListening(false);
 
-      // restart only if jarvis active AND not manually stopped
       if (!manualStopRef.current && jarvisActive) {
-        safeStart(); // <-- auto safe start
+        safeStart();
       }
     };
 
@@ -61,25 +81,23 @@ export function SpeechProvider({ children }) {
     };
   }, [jarvisActive]);
 
-  // ---------- SAFE START ----------
+  // -------- SAFE START --------
   const safeStart = () => {
     const recognition = recognitionRef.current;
     if (!recognition) return;
 
-    // already listening or trying to start – do nothing
-    if (listening || isStartingRef.current) return;
+    if (isStartingRef.current || listening) return;
 
     try {
       manualStopRef.current = false;
       isStartingRef.current = true;
       recognition.start();
-    } catch (err) {
-      // If already started → ignore silently
+    } catch {
       isStartingRef.current = false;
     }
   };
 
-  // ---------- SAFE STOP ----------
+  // -------- SAFE STOP --------
   const safeStop = () => {
     const recognition = recognitionRef.current;
     if (!recognition) return;
@@ -88,34 +106,30 @@ export function SpeechProvider({ children }) {
 
     try {
       recognition.stop();
-    } catch {
-      // not running → ignore
-    }
+    } catch {}
 
     setListening(false);
   };
 
-  // ---------- SPEAK ----------
+  // -------- SPEAK --------
   const speak = (text) => {
     if (!text) return;
 
     window.speechSynthesis.cancel();
-
     const u = new SpeechSynthesisUtterance(text);
     u.rate = 1;
     u.pitch = 1;
-
     window.speechSynthesis.speak(u);
   };
 
-  // ---------- COMMANDS ----------
+  // -------- COMMAND HANDLER --------
   useEffect(() => {
     if (!transcript) return;
 
     const text = transcript;
 
-    // ACTIVATE
-    if (text.includes("jarvis activate") || text.includes("hey jarvis")) {
+    // WAKE
+    if (text.includes("hey jarvis") || text.includes("jarvis activate")) {
       setJarvisActive(true);
       speak("Jarvis activated");
       safeStart();
@@ -123,53 +137,85 @@ export function SpeechProvider({ children }) {
       return;
     }
 
-    // DEACTIVATE
+    // SLEEP
     if (text.includes("jarvis sleep") || text.includes("jarvis deactivate")) {
-      speak("Going inactive");
+      speak("Jarvis deactivated");
       setJarvisActive(false);
       safeStop();
       setTranscript("");
       return;
     }
 
-    // Ignore if inactive
     if (!jarvisActive) return;
 
-    // OPEN ASSISTANT
-    if (text.includes("open assistant")) {
-      speak("Opening assistant");
-      navigate("/assistant");
+    // NAVIGATE
+    if (text.includes("open notes")) {
+      navigate("/notes");
+      speak("Opening notes");
       setTranscript("");
       return;
     }
 
-    // OPEN HOME
-    if (text.includes("open home")) {
-      speak("Going home");
-      navigate("/");
+    if (text.includes("open reminders")) {
+      navigate("/reminders");
+      speak("Opening reminders");
       setTranscript("");
       return;
     }
 
-    // BACK
-    if (text.includes("come back") || text.includes("go back")) {
-      speak("Going back");
-      navigate(-1);
+    // NOTES
+    if (text.includes("take note") || text.includes("note that")) {
+      const noteText = text
+        .replace("take note", "")
+        .replace("note that", "")
+        .trim();
+
+      if (noteText) {
+        setNotes((p) => [...p, { id: Date.now(), text: noteText }]);
+        speak("Note saved");
+      } else {
+        speak("What should I write?");
+      }
+
       setTranscript("");
       return;
     }
+
+    // REMINDERS (go to ReminderContext state)
+    if (text.includes("remind")) {
+        const when = parseReminderFromText(text);
+
+        setReminders(prev => [
+          ...prev,
+          {
+            id: Date.now(),
+            text,
+            time: when ? when.time.toISOString() : null,
+            displayLabel: when ? when.label : "",
+            triggered: false,
+          }
+        ]);
+
+
+      speak("Reminder saved");
+      setTranscript("");
+      return;
+    }
+
+    speak("Sorry, I am still learning");
+    setTranscript("");
   }, [transcript]);
 
   return (
     <SpeechContext.Provider
       value={{
         listening,
-        transcript,
+        jarvisActive,
         startListening: safeStart,
         stopListening: safeStop,
         speak,
-        jarvisActive,
-        setJarvisActive,
+        notes,
+        setNotes,
       }}
     >
       {children}
